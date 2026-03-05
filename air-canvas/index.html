@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Canvas - Smart Undo History</title>
+    <style>
+        body { 
+            margin: 0; 
+            background-color: #000; 
+            overflow: hidden; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            font-family: sans-serif; 
+        }
+
+        #container { 
+            position: relative; 
+            width: 100vw; 
+            height: 100vh; 
+            background: #000; 
+        }
+
+        video { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            opacity: 0.6; 
+            transform: scaleX(-1); 
+        }
+        
+        #draw_canvas, #ui_canvas { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            pointer-events: none; 
+        }
+
+        #draw_canvas { z-index: 5; }
+        #ui_canvas { z-index: 10; }
+        
+        #cursor { position: absolute; width: 20px; height: 20px; border: 2px solid white; background-color: #00ff00; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 30; transition: width 0.1s, height 0.1s, background-color 0.1s; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+        
+        #ui { position: absolute; top: 80px; left: 20px; z-index: 20; color: white; }
+        .controls { background: rgba(0,0,0,0.6); padding: 15px; border-radius: 10px; backdrop-filter: blur(5px); }
+        
+        .btn { background: rgba(0,0,0,0.6); border: 2px solid white; color: white; padding: 10px 15px; border-radius: 30px; font-weight: bold; cursor: pointer; backdrop-filter: blur(5px); transition: transform 0.1s, border-color 0.2s; }
+        
+        #lockBtn, #undoBtn {
+            padding: 15px 15px; 
+            font-size: 20px;    
+            border-radius: 40px; 
+       }
+
+        #brush-tools { 
+            position: absolute; 
+            top: 250px; 
+            left: 20px; 
+            display: flex; 
+            gap: 10px; 
+            z-index: 20; 
+        }
+
+        #lock-tool { 
+            position: absolute; 
+            top: 10px; 
+            left: 20px; 
+            display: flex;
+            gap: 15px;
+            z-index: 20; 
+        }
+    </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<div id="container">
+    <video id="input_video" playsinline></video>
+    <canvas id="draw_canvas"></canvas>
+    <canvas id="ui_canvas"></canvas>
+    <div id="cursor"></div>
+
+    <div id="ui">
+        <div class="controls">
+            <h3 style="margin-top: 0;">Air Canvas</h3>
+            <div>🎯 <b>Left Hand:</b> Aim</div>
+            <div>🤏 <b>Right Pinch:</b> Draw / Click</div>
+            <div>✋ <b>Right Open:</b> Erase Lines</div>
+            <div>✌️ <b>Right Peace Sign:</b> Toggle Lock</div>
+        </div>
+    </div>
+    
+    <div id="brush-tools">
+        <button class="btn" data-size="3">🖌️ Small</button>
+        <button class="btn" data-size="6" style="border-color: #00ff00;">🖌️ Med</button>
+        <button class="btn" data-size="12">🖌️ Large</button>
+    </div>
+
+    <div id="lock-tool">
+        <button class="btn" id="lockBtn" data-action="lock" style="border-color: cyan;">✌️ Lock: OFF</button>
+        <button class="btn" id="undoBtn" data-action="undo" style="border-color: orange;">↩️ Undo</button>
+    </div>
+
+<script>
+    class OneEuroFilter {
+        constructor(minCutoff = 1.0, beta = 0.0, dcutoff = 1.0) {
+            this.minCutoff = minCutoff; this.beta = beta; this.dcutoff = dcutoff;
+            this.xPrev = null; this.dxPrev = null; this.tPrev = null;
+        }
+        filter(x, t) {
+            if (this.tPrev === null) { this.xPrev = x; this.dxPrev = 0; this.tPrev = t; return x; }
+            const dt = (t - this.tPrev) / 1000; this.tPrev = t;
+            if (dt <= 0) return this.xPrev;
+            const dx = (x - this.xPrev) / dt;
+            const edx = this.exponentialSmoothing(dx, this.dxPrev, dt, this.dcutoff);
+            const cutoffFreq = this.minCutoff + this.beta * Math.abs(edx);
+            const result = this.exponentialSmoothing(x, this.xPrev, dt, cutoffFreq);
+            this.xPrev = result; this.dxPrev = edx; return result;
+        }
+        exponentialSmoothing(a, b, dt, cutoff) {
+            const tau = 1.0 / (2.0 * Math.PI * cutoff); const alpha = 1.0 / (1.0 + tau / dt);
+            return alpha * a + (1.0 - alpha) * b;
+        }
+    }
+
+    const videoElement = document.getElementById('input_video');
+    const drawCanvas = document.getElementById('draw_canvas');
+    const drawCtx = drawCanvas.getContext('2d');
+    const uiCanvas = document.getElementById('ui_canvas');
+    const uiCtx = uiCanvas.getContext('2d');
+    const cursor = document.getElementById('cursor');
+    
+    let lines = []; 
+    let currentPoints = []; 
+    let isDrawing = false;
+    let currentColor = '#00ff00';
+    let currentBrushSize = 6; 
+    let lastClickTime = 0;
+    
+    // 🟢 SMART UNDO HISTORY VARIABLES
+    let undoStack = [];
+    let wasErasing = false; // Tracks if we are in the middle of a continuous erase swipe
+    
+    let isLocked = false;
+    let actualNose = {x: window.innerWidth / 2, y: window.innerHeight / 2};
+    let actualTilt = 0;
+    let anchorNose = {x: window.innerWidth / 2, y: window.innerHeight / 2};
+    let anchorTilt = 0;
+    let lastLockTime = 0;
+    
+    let peaceFrames = 0; 
+    let isColorLocked = false; 
+    
+    const filterX = new OneEuroFilter(1.0, 0.03); 
+    const filterY = new OneEuroFilter(1.0, 0.03);
+    const predictionFactor = 0.65; 
+    const lastRaw = {x: 0, y: 0};
+
+    let CW_X = 150; 
+    let CW_Y = 430;  
+    const CW_R = 120; 
+    
+    function resizeCanvas() {
+        drawCanvas.width = window.innerWidth;
+        drawCanvas.height = window.innerHeight;
+        uiCanvas.width = window.innerWidth;
+        uiCanvas.height = window.innerHeight;
+        
+        drawUI(); 
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    function drawUI() {
+        uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+        for(let angle=0; angle<=360; angle+=1){
+            let startAngle = (angle-1.5)*Math.PI/180;
+            let endAngle = (angle+0.5) * Math.PI/180;
+            uiCtx.beginPath();
+            uiCtx.moveTo(CW_X, CW_Y);
+            uiCtx.arc(CW_X, CW_Y, CW_R, startAngle, endAngle);
+            uiCtx.closePath();
+            uiCtx.fillStyle = 'hsl('+angle+', 100%, 50%)';
+            uiCtx.fill();
+        }
+        
+        let grad = uiCtx.createRadialGradient(CW_X, CW_Y, 0, CW_X, CW_Y, CW_R);
+        grad.addColorStop(0, 'rgba(255,255,255,1)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        uiCtx.fillStyle = grad;
+        uiCtx.beginPath();
+        uiCtx.arc(CW_X, CW_Y, CW_R, 0, Math.PI*2);
+        uiCtx.fill();
+
+        uiCtx.lineWidth = 4;
+        uiCtx.strokeStyle = 'rgba(255,255,255,0.8)';
+        uiCtx.beginPath();
+        uiCtx.arc(CW_X, CW_Y, CW_R, 0, Math.PI*2);
+        uiCtx.stroke();
+        
+        uiCtx.fillStyle = 'white';
+        uiCtx.font = 'bold 16px sans-serif';
+        uiCtx.textAlign = 'center';
+        uiCtx.fillText("🎨 Pick Color", CW_X, CW_Y + CW_R + 30);
+    }
+    resizeCanvas(); 
+
+    function toggleLock() {
+        isLocked = !isLocked;
+        const lockBtn = document.getElementById('lockBtn');
+        if (isLocked) {
+            anchorNose = {x: actualNose.x, y: actualNose.y};
+            anchorTilt = actualTilt;
+            lockBtn.innerText = "✌️ Lock: ON";
+            lockBtn.style.backgroundColor = "cyan";
+            lockBtn.style.color = "black";
+        } else {
+            lockBtn.innerText = "✌️ Lock: OFF";
+            lockBtn.style.backgroundColor = "rgba(0,0,0,0.6)";
+            lockBtn.style.color = "white";
+        }
+    }
+
+    function mapToScreen(normX, normY) {
+        const videoW = videoElement.videoWidth;
+        const videoH = videoElement.videoHeight;
+        
+        if (!videoW || !videoH) return { x: (1 - normX) * drawCanvas.width, y: normY * drawCanvas.height }; 
+        
+        const videoRatio = videoW / videoH;
+        const screenRatio = drawCanvas.width / drawCanvas.height;
+        
+        let renderW = drawCanvas.width;
+        let renderH = drawCanvas.height;
+        let offsetX = 0;
+        let offsetY = 0;
+        
+        if (screenRatio > videoRatio) {
+            renderH = drawCanvas.width / videoRatio;
+            offsetY = (renderH - drawCanvas.height) / 2;
+        } else {
+            renderW = drawCanvas.height * videoRatio;
+            offsetX = (renderW - drawCanvas.width) / 2;
+        }
+        
+        return {
+            x: ((1 - normX) * renderW) - offsetX,
+            y: (normY * renderH) - offsetY
+        };
+    }
+
+    function onResults(results) {
+        let rightHandFound = false;
+        let leftHandAction = 'hover'; 
+        let rawX = null;
+        let rawY = null;
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            results.multiHandedness.forEach((handedness, index) => {
+                const label = handedness.label; 
+                const landmarks = results.multiHandLandmarks[index];
+
+                if (label === 'Right') {
+                    rightHandFound = true;
+                    const indexTip = landmarks[8];
+                    const mappedPos = mapToScreen(indexTip.x, indexTip.y);
+                    rawX = mappedPos.x;
+                    rawY = mappedPos.y;
+                }
+
+                if (label === 'Left') {
+                    const wrist = landmarks[0];
+                    const thumbTip = landmarks[4];
+                    const indexTip = landmarks[8];
+                    const middleTip = landmarks[12];
+                    
+                    const getDist = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
+
+                    const pinchDist = getDist(indexTip, thumbTip);
+                    const fingerDist = getDist(middleTip, wrist);
+                    
+                    const isFolded = (tip, pip) => getDist(landmarks[tip], wrist) < getDist(landmarks[pip], wrist);
+                    const isExtended = (tip, pip) => getDist(landmarks[tip], wrist) > getDist(landmarks[pip], wrist);
+
+                    const indexUp = isExtended(8, 5);
+                    const middleUp = isExtended(12, 9);
+                    const ringDown = isFolded(16, 13);
+                    const pinkyDown = isFolded(20, 17);
+                    const vGap = getDist(landmarks[8], landmarks[12]);
+                    
+                    const isPeaceSign = indexUp && middleUp && ringDown && pinkyDown && (pinchDist > 0.08) && (vGap > 0.04);
+
+                    if (isPeaceSign) { peaceFrames++; } else { peaceFrames = 0; }
+
+                    if (pinchDist < 0.04) {
+                        leftHandAction = 'pinch';
+                    } else if (peaceFrames > 5) { 
+                        leftHandAction = 'peace';
+                    } else if (fingerDist > 0.3) {
+                        leftHandAction = 'open'; 
+                    }
+                }
+            });
+        }
+
+        const now = Date.now();
+
+        // Tells the AI the continuous eraser swipe has officially ended
+        if (leftHandAction !== 'open') {
+            wasErasing = false;
+        }
+
+        if (leftHandAction !== 'pinch') {
+            isColorLocked = false;
+        }
+
+        if (leftHandAction === 'peace') {
+            if (isDrawing) { 
+                isDrawing = false; 
+                if (currentPoints.length > 0) lines.push({points: [...currentPoints], color: currentColor, size: currentBrushSize});
+                currentPoints = []; 
+            }
+            if (now - lastLockTime > 2000) {
+                toggleLock();
+                lastLockTime = now;
+            }
+        }
+
+        if (rightHandFound && rawX !== null) {
+            const velocityX = rawX - lastRaw.x;
+            const velocityY = rawY - lastRaw.y;
+            const predictedX = rawX + (velocityX * predictionFactor);
+            const predictedY = rawY + (velocityY * predictionFactor);
+
+            const smoothX = filterX.filter(predictedX, now);
+            const smoothY = filterY.filter(predictedY, now);
+
+            lastRaw.x = rawX;
+            lastRaw.y = rawY;
+
+            let boardX = smoothX;
+            let boardY = smoothY;
+
+            if (isLocked) {
+                const dRot = actualTilt - anchorTilt;
+                const tx = smoothX - actualNose.x;
+                const ty = smoothY - actualNose.y;
+                const cos = Math.cos(-dRot);
+                const sin = Math.sin(-dRot);
+                
+                const rx = tx * cos - ty * sin;
+                const ry = tx * sin + ty * cos;
+                
+                boardX = rx + anchorNose.x;
+                boardY = ry + anchorNose.y;
+            }
+
+            const distToWheel = Math.hypot(smoothX - CW_X, smoothY - CW_Y);
+            const isHoveringWheel = distToWheel <= CW_R;
+
+            const rect = document.getElementById('container').getBoundingClientRect();
+            const globalX = rect.left + smoothX;
+            const globalY = rect.top + smoothY;
+            
+            cursor.style.display = 'none'; 
+            const element = document.elementFromPoint(globalX, globalY);
+            let isHoveringButton = false;
+            let hoveredButton = null;
+
+            if (element && element.closest('.btn')) {
+                isHoveringButton = true;
+                hoveredButton = element.closest('.btn');
+                hoveredButton.style.transform = 'scale(1.1)'; 
+            }
+
+            document.querySelectorAll('.btn').forEach(btn => {
+                if (btn !== hoveredButton) btn.style.transform = 'scale(1)';
+            });
+
+            if (leftHandAction === 'peace') {
+                cursor.style.left = `${smoothX}px`;
+                cursor.style.top = `${smoothY}px`;
+                cursor.style.display = 'block';
+                cursor.style.width = '40px';
+                cursor.style.height = '40px';
+                cursor.style.backgroundColor = 'transparent';
+                cursor.style.borderColor = 'cyan';
+                cursor.style.borderWidth = '4px';
+            }
+            else if (leftHandAction === 'pinch') {
+                if (isHoveringWheel && !isDrawing) {
+                    isDrawing = false;
+                    
+                    if (!isColorLocked) {
+                        let a = Math.atan2(smoothY - CW_Y, smoothX - CW_X);
+                        let deg = a * (180 / Math.PI);
+                        if (deg < 0) deg += 360; 
+                        let clampedDist = Math.min(distToWheel, CW_R);
+                        let l = 100 - (clampedDist / CW_R) * 50; 
+                        
+                        currentColor = `hsl(${deg}, 100%, ${l}%)`;
+                        isColorLocked = true; 
+                    }
+
+                    cursor.style.left = `${smoothX}px`;
+                    cursor.style.top = `${smoothY}px`;
+                    cursor.style.backgroundColor = currentColor;
+                    cursor.style.display = 'block'; 
+                    cursor.style.width = '40px'; 
+                    cursor.style.height = '40px';
+                    cursor.style.borderColor = '#00ff00'; 
+                    cursor.style.borderWidth = '4px';
+
+                } else if (isHoveringButton && !isDrawing) {
+                    isDrawing = false;
+                    cursor.style.display = 'block';
+                    
+                    if (now - lastClickTime > 500) {
+                        if (hoveredButton.dataset.size) {
+                            currentBrushSize = parseInt(hoveredButton.dataset.size);
+                            document.querySelectorAll('.btn[data-size]').forEach(b => b.style.borderColor = 'white');
+                            hoveredButton.style.borderColor = '#00ff00';
+                        } else if (hoveredButton.dataset.action === 'lock') {
+                            if (now - lastLockTime > 2000) {
+                                toggleLock();
+                                lastLockTime = now;
+                            }
+                        } else if (hoveredButton.dataset.action === 'undo') {
+                            // 🟢 SMART UNDO LOGIC: Reloads from the History Stack!
+                            if (undoStack.length > 0) {
+                                lines = undoStack.pop();
+                            } else {
+                                lines = []; // Clear board if we undo past the very first stroke
+                            }
+                            
+                            hoveredButton.style.backgroundColor = 'white';
+                            hoveredButton.style.color = 'black';
+                            setTimeout(() => {
+                                if (hoveredButton) {
+                                    hoveredButton.style.backgroundColor = 'rgba(0,0,0,0.6)';
+                                    hoveredButton.style.color = 'white';
+                                }
+                            }, 200);
+                        }
+                        lastClickTime = now;
+                    }
+                } else if (isLocked) {
+                    isDrawing = false;
+                    cursor.style.left = `${smoothX}px`;
+                    cursor.style.top = `${smoothY}px`;
+                    cursor.style.display = 'block';
+                    cursor.style.backgroundColor = 'transparent';
+                    cursor.style.borderColor = 'red'; 
+                    cursor.style.borderWidth = '4px';
+                    cursor.style.width = '30px';
+                    cursor.style.height = '30px';
+                } else {
+                    if (!isDrawing) {
+                        // 🟢 HISTORY SAVE: Before we draw a new line, take a "screenshot" of the lines array
+                        undoStack.push(JSON.parse(JSON.stringify(lines)));
+                        isDrawing = true;
+                        currentPoints = []; 
+                    }
+                    
+                    const newPoint = {x: boardX, y: boardY};
+                    if (currentPoints.length === 0) {
+                        currentPoints.push(newPoint);
+                    } else {
+                        const lastPt = currentPoints[currentPoints.length - 1];
+                        const dist = Math.sqrt(Math.pow(newPoint.x - lastPt.x, 2) + Math.pow(newPoint.y - lastPt.y, 2));
+                        if (dist > 3) currentPoints.push(newPoint);
+                    }
+                    cursor.style.display = 'none'; 
+                }
+            } 
+            else if (leftHandAction === 'open') {
+                if (isDrawing) {
+                    isDrawing = false;
+                    if (currentPoints.length > 0) lines.push({points: [...currentPoints], color: currentColor, size: currentBrushSize});
+                    currentPoints = [];
+                }
+
+                if (isLocked) {
+                    cursor.style.left = `${smoothX}px`;
+                    cursor.style.top = `${smoothY}px`;
+                    cursor.style.display = 'block';
+                    cursor.style.backgroundColor = 'transparent';
+                    cursor.style.borderColor = 'red'; 
+                    cursor.style.borderWidth = '4px';
+                    cursor.style.width = '30px';
+                    cursor.style.height = '30px';
+                } else {
+                    const eraserRadius = 30; 
+                    let erasedSomething = false;
+
+                    // Figure out what the eraser is touching
+                    const newLines = lines.filter(line => {
+                        const isTouching = line.points.some(pt => {
+                            const dx = pt.x - boardX;
+                            const dy = pt.y - boardY;
+                            return Math.sqrt(dx*dx + dy*dy) < eraserRadius;
+                        });
+                        if (isTouching) erasedSomething = true;
+                        return !isTouching; 
+                    });
+
+                    // 🟢 HISTORY SAVE: Only save memory if the eraser actually hit and deleted a line!
+                    if (erasedSomething) {
+                        if (!wasErasing) {
+                            // Take a "screenshot" right before the lines disappear
+                            undoStack.push(JSON.parse(JSON.stringify(lines)));
+                            wasErasing = true;
+                        }
+                        lines = newLines; // Apply the deletion
+                    }
+
+                    cursor.style.left = `${smoothX}px`;
+                    cursor.style.top = `${smoothY}px`;
+                    cursor.style.display = 'block';
+                    cursor.style.width = '60px'; 
+                    cursor.style.height = '60px';
+                    cursor.style.backgroundColor = 'transparent';
+                    cursor.style.borderColor = 'hotpink';
+                    cursor.style.borderWidth = '4px';
+                }
+            }
+            else {
+                if (isDrawing) {
+                    isDrawing = false;
+                    if (currentPoints.length > 0) lines.push({points: [...currentPoints], color: currentColor, size: currentBrushSize});
+                    currentPoints = [];
+                }
+                
+                cursor.style.left = `${smoothX}px`;
+                cursor.style.top = `${smoothY}px`;
+                cursor.style.display = 'block';
+                cursor.style.borderWidth = '2px';
+
+                if (isHoveringWheel) {
+                    let a = Math.atan2(smoothY - CW_Y, smoothX - CW_X);
+                    let deg = a * (180 / Math.PI);
+                    if (deg < 0) deg += 360; 
+                    let clampedDist = Math.min(distToWheel, CW_R);
+                    let l = 100 - (clampedDist / CW_R) * 50; 
+                    
+                    cursor.style.backgroundColor = `hsl(${deg}, 100%, ${l}%)`;
+                    cursor.style.width = '30px';
+                    cursor.style.height = '30px';
+                    cursor.style.borderColor = 'white';
+                } else if (isHoveringButton) {
+                    cursor.style.backgroundColor = currentColor;
+                    cursor.style.width = '20px';
+                    cursor.style.height = '20px';
+                    cursor.style.borderColor = 'white';
+                } else if (isLocked) {
+                    cursor.style.backgroundColor = 'transparent';
+                    cursor.style.borderColor = 'red';
+                    cursor.style.width = '20px';
+                    cursor.style.height = '20px';
+                } else {
+                    cursor.style.backgroundColor = currentColor;
+                    cursor.style.width = `${currentBrushSize * 2.5}px`;
+                    cursor.style.height = `${currentBrushSize * 2.5}px`;
+                    cursor.style.borderColor = 'white';
+                }
+            }
+        } else {
+            cursor.style.display = 'none';
+            if (isDrawing) {
+                isDrawing = false;
+                if (currentPoints.length > 0) lines.push({points: [...currentPoints], color: currentColor, size: currentBrushSize});
+                currentPoints = [];
+            }
+        }
+
+        drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+        
+        drawCtx.save();
+        if (isLocked) {
+            drawCtx.translate(actualNose.x, actualNose.y);
+            drawCtx.rotate(actualTilt - anchorTilt);
+            drawCtx.translate(-anchorNose.x, -anchorNose.y);
+        }
+
+        drawCtx.lineCap = 'round';
+        drawCtx.lineJoin = 'round';
+
+        lines.forEach(line => {
+            if (line.points.length < 2) return;
+            drawCtx.strokeStyle = line.color;
+            drawCtx.lineWidth = line.size || 6; 
+            drawCtx.beginPath();
+            drawCtx.moveTo(line.points[0].x, line.points[0].y);
+            for(let i = 1; i < line.points.length; i++){
+                drawCtx.lineTo(line.points[i].x, line.points[i].y);
+            }
+            drawCtx.stroke();
+        });
+
+        if (currentPoints.length > 1) {
+            drawCtx.strokeStyle = currentColor;
+            drawCtx.lineWidth = currentBrushSize; 
+            drawCtx.beginPath();
+            drawCtx.moveTo(currentPoints[0].x, currentPoints[0].y);
+            for(let i = 1; i < currentPoints.length; i++){
+                drawCtx.lineTo(currentPoints[i].x, currentPoints[i].y);
+            }
+            drawCtx.stroke();
+        }
+        
+        drawCtx.restore(); 
+    }
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+    hands.onResults(onResults);
+
+    const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+    
+    faceMesh.onResults((results) => {
+        if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+            const face = results.multiFaceLandmarks[0];
+            
+            const mappedNose = mapToScreen(face[1].x, face[1].y);
+            const mappedLeftEye = mapToScreen(face[263].x, face[263].y);
+            const mappedRightEye = mapToScreen(face[33].x, face[33].y);
+
+            const angle = Math.atan2(mappedRightEye.y - mappedLeftEye.y, mappedRightEye.x - mappedLeftEye.x);
+
+            actualNose.x = actualNose.x * 0.4 + mappedNose.x * 0.6;
+            actualNose.y = actualNose.y * 0.4 + mappedNose.y * 0.6;
+            actualTilt = actualTilt * 0.4 + angle * 0.6;
+        }
+    });
+
+    navigator.mediaDevices.enumerateDevices().then(async devices => {
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        const camo = videoDevices.find(d => d.label.toLowerCase().includes('camo'));
+        
+        const constraints = {
+            video: { width: 1920, height: 1080, deviceId: camo ? { exact: camo.deviceId } : undefined }
+        };
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            videoElement.srcObject = stream;
+            videoElement.play();
+
+            async function processVideo() {
+                try {
+                    if (!videoElement.paused && !videoElement.ended) {
+                        await hands.send({image: videoElement});
+                        await faceMesh.send({image: videoElement});
+                    }
+                } catch (err) {}
+                
+                requestAnimationFrame(processVideo);
+            }
+            videoElement.onloadeddata = () => processVideo();
+        } catch (err) {
+            console.error("Camera error:", err);
+            alert("Could not access camera.");
+        }
+    });
+</script>
+</body>
+</html>
