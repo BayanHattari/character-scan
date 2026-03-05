@@ -1,0 +1,71 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  /* Animated gradient background using brand color #3D5AB3 */
+  background: linear-gradient(-45deg, #000000, #3D5AB3, #1a1a1a, #3D5AB3);
+  background-size: 400% 400%;
+  animation: blueGradientAnimation 15s ease infinite;
+  overflow: hidden;
+  cursor: none;
+}
+
+@keyframes blueGradientAnimation {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.wall-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Photo grid layout configuration */
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+  z-index: 1;
+}
+
+/* Individual photo styling with 3:4 aspect ratio */
+.visitor-photo {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  opacity: 0.9;
+  border-radius: 4px;
+  animation: fadeIn 1s ease-in forwards;
+}
+
+/* Centered logo overlay with high visibility and glow effect */
+.logo-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  max-width: 1400px;
+  z-index: 999;
+  opacity: 0.9; 
+  pointer-events: none;
+  filter: drop-shadow(0 0 40px rgba(61, 90, 179, 0.9)); 
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 0.9; }
+}
