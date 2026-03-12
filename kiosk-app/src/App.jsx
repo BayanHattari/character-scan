@@ -7,32 +7,27 @@ import Background from './Background'
 import cameraIcon from './assets/camera-icon.png'
 import Video from './assets/Instructions_Video.mp4'
 import FacePaintCanvas from './FacePaintCanvas';
+
 const App = () => {
   const [screen, setScreen] = useState("home")
-  const [capturedImage, setCapturedImage] = useState(null); // Added state for the image
+  const [capturedImage, setCapturedImage] = useState(null)
   
   const inactivityTimerRef = useRef(null)
   const lastHandDetectedRef = useRef(Date.now())
-  const canvasRef = useRef(null); // Added ref for the canvas
+  const canvasRef = useRef(null)
 
-  // --- Handlers ---
   const handleCapture = async () => {
     if (canvasRef.current) {
-      // Call the exportImage function exposed via useImperativeHandle
-      const imageBlob = await canvasRef.current.exportImage();
+      const imageBlob = await canvasRef.current.exportImage()
       
       if (imageBlob) {
-        // Convert the blob to a local URL so we can display it later
-        const imageUrl = URL.createObjectURL(imageBlob);
-        setCapturedImage(imageUrl);
-        <FacePaintCanvas ref={canvasRef} onCapture={handleCapture} />
-        // Move to the success screen
-        setScreen("success");
+        const imageUrl = URL.createObjectURL(imageBlob)
+        setCapturedImage(imageUrl)
+        setScreen("success")
       }
     }
-  };
+  }
 
-  // --- Effects ---
   useEffect(() => {
     const startTimer = () => {
       if (inactivityTimerRef.current) {
@@ -50,7 +45,6 @@ const App = () => {
       }
     }
 
-    // -------- NORMAL SCREENS --------
     if (screen !== "camera") {
       window.addEventListener("click", resetTimer)
       window.addEventListener("touchstart", resetTimer)
@@ -62,7 +56,6 @@ const App = () => {
       }
     }
 
-    // -------- CAMERA SCREEN --------
     if (screen === "camera") {
       lastHandDetectedRef.current = Date.now()
       startTimer()
@@ -83,7 +76,6 @@ const App = () => {
 
     return () => {
       clearTimeout(inactivityTimerRef.current)
-
       window.removeEventListener("click", resetTimer)
       window.removeEventListener("touchstart", resetTimer)
       window.removeEventListener("mousemove", resetTimer)
@@ -92,11 +84,8 @@ const App = () => {
 
   }, [screen])
 
-  
-  // --- Render ---
   return (
     <>
-      {/* Black Navigation Bar With Logos */}
       <nav className="navbar">
         <div className="navbar-container">
           <div className="logo-left">
@@ -108,26 +97,24 @@ const App = () => {
         </div>
       </nav>
 
-      {/* Home Screen */}
       {screen === "home" && (
       <div className="hero-section">
         <Background />
         <h1>Character Scan</h1>
         <p>Lighten up the Wall</p>
-        <div className = "hero-btn">
-          <button className = 'btn btn--outline btn--large' onClick={() => setScreen("instructions")} 
-            >Get Started</button>
+        <div className="hero-btn">
+          <button className='btn btn--outline btn--large' onClick={() => setScreen("instructions")}>
+            Get Started
+          </button>
         </div>
       </div>
       )}
 
-      {/* Instructions Screen */}
       {screen === "instructions" && (
         <div className="instructions-screen">
           <Background />
           <div className="instructions-container split-layout">
 
-            {/* Instructions Text on the Left */}
             <div className="instructions-left">
               <h2>How It Works</h2>
               <ul>
@@ -139,14 +126,12 @@ const App = () => {
                 <li>🎨 <strong>Color Wheel</strong><br /> Hover to preview, pinch to select.</li>
               </ul>
 
-              {/* Buttons on the Instruction Screen */}
               <div className="instructions-buttons">
                 <button className="btn btn--outline btn--large" onClick={() => setScreen("home")}>Back</button>
                 <button className="btn btn--primary btn--large" onClick={() => setScreen("consent")}>Next</button>
               </div>
             </div>
 
-            {/* Instruction Video on the Right */}
             <div className="instructions-right">
               <video 
                 src={Video} alt="Video Instructions"
@@ -157,7 +142,6 @@ const App = () => {
         </div>
       )}
 
-      {/* Consent Screen */}
       {screen === "consent" && (
         <div className="instructions-screen">
           <Background />
@@ -180,22 +164,18 @@ const App = () => {
         </div>
       )}
 
-    {/* Camera Screen */}
       {screen === "camera" && (
-<div className="camera-screen" style={{ 
-    position: 'relative', 
-    width: '100vw', 
-    height: 'calc(100vh - 80px)', // خصمنا مساحة الهيدر التقريبية
-    overflow: 'hidden' 
-}}>          
-     {/* Mount the Canvas Component here */}
-<FacePaintCanvas ref={canvasRef} onCapture={handleCapture} />
+        <div className="camera-screen" style={{ 
+            position: 'relative', 
+            width: '100vw', 
+            height: 'calc(100vh - 80px)',
+            overflow: 'hidden' 
+        }}>          
+          <FacePaintCanvas ref={canvasRef} onCapture={handleCapture} />
 
-          {/* Controls layered over the canvas */}
-          {/* Controls layered over the canvas */}
           <div className="camera-controls" style={{ 
               position: 'absolute', 
-              bottom: '100px', /* رفعنا الزر للأعلى ليكون واضحاً في الشاشة */
+              bottom: '100px', 
               left: '50%',
               transform: 'translateX(-50%)', 
               display: 'flex', 
@@ -203,7 +183,6 @@ const App = () => {
               zIndex: 9999 
             }}>
             
-            {/* الزر بعد ترقيته ليقرأ حركة اليد */}
             <button 
               className="air-btn" 
               data-action="capture"
@@ -224,7 +203,6 @@ const App = () => {
               onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
               onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
             >
-              {/* أضفنا pointerEvents: 'none' لكي لا تعيق الصورة حركة الإصبع */}
               <img src={cameraIcon} alt="Camera" style={{ width: '40px', height: '40px', pointerEvents: 'none' }} />
             </button>
             
@@ -232,7 +210,6 @@ const App = () => {
         </div>
       )}
 
-    {/* Success Screen */}
       {screen === "success" && (
         <div className="instructions-screen">
           <Background />
@@ -241,7 +218,6 @@ const App = () => {
               <h2>Success ✔</h2>
               <p>The image was successfully saved.</p>
 
-              {/* Show a preview of the drawing */}
               {capturedImage && (
                 <img 
                   src={capturedImage} 
@@ -250,7 +226,6 @@ const App = () => {
                 />
               )}
 
-              {/* Reset Button */}
               <button 
                 className="btn btn--primary btn--large" 
                 style={{ marginTop: '30px' }}

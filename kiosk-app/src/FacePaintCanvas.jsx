@@ -1,16 +1,3 @@
-/**
- * FacePaintCanvas.jsx
- * ────────────────────────────────────────────────────────────────
- * كود لوحة الرسم الجوية (Air Canvas) محوَّل إلى React Component
- * يعمل مع MediaPipe Hands + FaceMesh محمَّلَين عبر CDN في index.html
- *
- * Ref API المكشوف لباقي الفريق:
- * exportImage()   → Promise<Blob>   — يصدّر صورة PNG للرسمة + الكاميرا
- * resetSession()  → void            — يمسح اللوحة ويبدأ جلسة جديدة
- * isReady()       → boolean         — هل الكاميرا + MediaPipe جاهزَين؟
- * ────────────────────────────────────────────────────────────────
- */
-
 import React, {
   useRef,
   useEffect,
@@ -20,7 +7,6 @@ import React, {
   useCallback,
 } from 'react'
 
-// ─── OneEuroFilter ────────────────────────────────────────────────
 class OneEuroFilter {
   constructor(minCutoff = 1.0, beta = 0.0, dcutoff = 1.0) {
     this.minCutoff = minCutoff
@@ -57,28 +43,23 @@ class OneEuroFilter {
   }
 }
 
-// ─── ثوابت ───────────────────────────────────────────────────────
-const CW_X = 110      // مركز عجلة الألوان X (تم سحبها لليسار)
-const CW_Y = 440      // مركز عجلة الألوان Y (تم رفعها لتجنب القطع)
-const CW_R = 80       // نصف قطر عجلة الألوان (تم تصغيرها)
-const PREDICT = 0.65  // معامل التنبؤ بالحركة
-const ERASE_R = 30    // نصف قطر الممحاة
+const CW_X = 110
+const CW_Y = 440
+const CW_R = 80
+const PREDICT = 0.65
+const ERASE_R = 30
 
-// ─── FacePaintCanvas ─────────────────────────────────────────────
 const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) {
-  // ── DOM refs
   const videoRef      = useRef(null)
   const drawCanvasRef = useRef(null)
   const uiCanvasRef   = useRef(null)
   const cursorRef     = useRef(null)
   const containerRef  = useRef(null)
 
-  // ── UI state (React re-renders)
   const [lockedUI,    setLockedUI]    = useState(false)
   const [brushSizeUI, setBrushSizeUI] = useState(6)
   const [ready,       setReady]       = useState(false)
 
-  // ── Drawing state (refs → لا re-renders داخل حلقة الأنيميشن)
   const lines         = useRef([])
   const curPts        = useRef([])
   const drawing       = useRef(false)
@@ -99,9 +80,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
   const fx            = useRef(new OneEuroFilter(1.0, 0.03))
   const fy            = useRef(new OneEuroFilter(1.0, 0.03))
 
-  // ─────────────────────────────────────────────────────────────
-  // Ref API المكشوف لباقي الفريق
-  // ─────────────────────────────────────────────────────────────
   useImperativeHandle(ref, () => ({
     exportImage: () =>
       new Promise((resolve) => {
@@ -142,9 +120,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
     isReady: () => ready,
   }), [ready])
 
-  // ─────────────────────────────────────────────────────────────
-  // رسم عجلة الألوان على uiCanvas
-  // ─────────────────────────────────────────────────────────────
   const drawUI = useCallback(() => {
     const uc = uiCanvasRef.current
     if (!uc) return
@@ -177,9 +152,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
     ctx.fillText('🎨 Pick Color', CW_X, CW_Y + CW_R + 30)
   }, [])
 
-  // ─────────────────────────────────────────────────────────────
-  // تحويل إحداثيات MediaPipe المعيّارة → بكسلات الشاشة
-  // ─────────────────────────────────────────────────────────────
   const mapToScreen = useCallback((nx, ny) => {
     const video = videoRef.current
     const dc    = drawCanvasRef.current
@@ -201,9 +173,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
     return { x: ((1 - nx) * rW) - ox, y: (ny * rH) - oy }
   }, [])
 
-  // ─────────────────────────────────────────────────────────────
-  // تبديل وضع Lock
-  // ─────────────────────────────────────────────────────────────
   const toggleLock = useCallback(() => {
     const next = !locked.current
     locked.current = next
@@ -214,9 +183,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
     setLockedUI(next)
   }, [])
 
-  // ─────────────────────────────────────────────────────────────
-  // Resize
-  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const dc = drawCanvasRef.current
     const uc = uiCanvasRef.current
@@ -230,9 +196,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
     return () => window.removeEventListener('resize', onResize)
   }, [drawUI])
 
-  // ─────────────────────────────────────────────────────────────
-  // تهيئة MediaPipe + الكاميرا
-  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const video = videoRef.current
     const dc    = drawCanvasRef.current
@@ -363,7 +326,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
                 }, 200)
 
               } else if (onBtn.dataset.action === 'capture') {
-                // 1. تأثير بصري للزر عند القرص (يصغر ليعطيك إحساس الضغطة)
                 onBtn.style.transform = 'scale(0.85)'
                 onBtn.style.backgroundColor = '#ddd'
                 setTimeout(() => {
@@ -371,11 +333,10 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
                   onBtn.style.backgroundColor = 'white'
                 }, 200)
 
-                // 2. الجسر الذي يفعّل التصوير مع التحقق من وجود الدالة
                 if (typeof onCapture === 'function') {
                   onCapture();
                 } else {
-                  console.error("🚨 Error: 'onCapture' function is missing! Did you pass it from App.jsx?");
+                  console.error("Error: 'onCapture' function is missing!");
                 }
               }
               
@@ -567,15 +528,11 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
     })()
   }, [mapToScreen, toggleLock, drawUI])
 
-  // ─────────────────────────────────────────────────────────────
-  // JSX
-  // ─────────────────────────────────────────────────────────────
   return (
     <div ref={containerRef} style={{
       position: 'relative', width: '100vw', height: '100vh',
       background: '#000', overflow: 'hidden'
     }}>
-      {/* الفيديو - مقلوب أفقياً */}
       <video ref={videoRef} playsInline style={{
         position: 'absolute', top: 0, left: 0,
         width: '100%', height: '100%',
@@ -603,7 +560,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
         boxShadow: '0 0 10px rgba(0,0,0,0.5)', display: 'none'
       }} />
 
-      {/* 1. أزرار Lock + Undo (مُصغرة ومرفوعة) */}
       <div style={{
         position: 'absolute', top: 20, left: 20,
         display: 'flex', gap: '10px', zIndex: 20
@@ -627,7 +583,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
         </button>
       </div>
 
-      {/* 2. بطاقة التعليمات (مُصغرة وموضوعة أسفل الأزرار العلوية) */}
       <div style={{
         position: 'absolute', top: 70, left: 20, zIndex: 20, color: 'white'
       }}>
@@ -647,7 +602,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
         </div>
       </div>
 
-      {/* 3. أزرار الفرشاة (مُصغرة وموضوعة أسفل التعليمات) */}
       <div style={{
         position: 'absolute', top: 260, left: 20,
         display: 'flex', gap: '8px', zIndex: 20
@@ -665,7 +619,6 @@ const FacePaintCanvas = forwardRef(function FacePaintCanvas({ onCapture }, ref) 
         ))}
       </div>
 
-      {/* شاشة التحميل */}
       {!ready && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex',
