@@ -63,9 +63,9 @@ const App = () => {
       const interval = setInterval(() => {
         const now = Date.now()
 
-        if (now - lastHandDetectedRef.current > 60000) {
+       /* if (now - lastHandDetectedRef.current > 60000) {
           setScreen("home")
-        }
+        }*/
       }, 1000)
 
       return () => {
