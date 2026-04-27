@@ -1,10 +1,5 @@
 {
   "name": "characterscan",
-<<<<<<< HEAD
-  "homepage": "https://DanyahBa.github.io/TechHub_CharacterScan/",
-=======
-  "homepage": "https://DanyahBa.github.io/character-scan/",
->>>>>>> db342cc (Character Scan)
   "private": true,
   "version": "0.0.0",
   "type": "module",
